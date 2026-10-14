@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AR Quest - Realidad Aumentada</title>
+
+  <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+  <!-- Animaciones del robot descargado (animation-mixer) -->
+  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@6.1.1/dist/aframe-extras.min.js"></script>
+
+  <style>
+    html { background: linear-gradient(#1b2a5a, #4a6fa5); }
+    html, body { margin: 0; height: 100%; font-family: Arial, sans-serif; overflow: hidden;
+      touch-action: none; user-select: none; -webkit-user-select: none; }
+    body { background: transparent; }
+
+    /* Cámara del dispositivo como fondo (realidad aumentada) */
+    #video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
+      z-index: 0; display: none; }
+
+    #panel {
+      position: fixed; top: 10px; left: 10px; z-index: 999;
+      background: rgba(0, 0, 0, 0.7); color: #fff;
+      padding: 8px 12px; border-radius: 10px; font-size: 15px; line-height: 1.45;
+    }
+    #panel b { color: #FFD700; }
+    .btn { margin-top: 5px; margin-right: 4px; padding: 7px 10px; border: none;
+      border-radius: 6px; cursor: pointer; font-size: 13px; }
+
+    #dpad { position: fixed; bottom: 22px; left: 22px; z-index: 999;
+      display: grid; grid-template-columns: repeat(3, 62px); grid-template-rows: repeat(3, 62px); gap: 6px; }
+    #dpad button { border: none; border-radius: 14px; font-size: 26px;
+      background: rgba(0, 0, 0, 0.55); color: #fff; touch-action: none; }
+    #dpad button.activo { background: #FFD700; color: #222; }
+    #dpad .arriba { grid-area: 1 / 2; } #dpad .izq { grid-area: 2 / 1; }
+    #dpad .der { grid-area: 2 / 3; }    #dpad .abajo { grid-area: 3 / 2; }
+
+    #ayuda { position: fixed; bottom: 22px; right: 14px; z-index: 999; color: #fff;
+      background: rgba(0,0,0,.55); padding: 8px 12px; border-radius: 10px; font-size: 13px;
+      text-align: right; max-width: 180px; }
+
+    /* Mira al centro de la pantalla */
+    #mira { position: fixed; top: 50%; left: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+      border: 2px solid rgba(255,255,255,.7); border-radius: 50%; z-index: 998; pointer-events: none; display: none; }
+
+    #pantalla {
+      position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; text-align: center;
+      background: rgba(10, 10, 40, 0.88); color: #fff; padding: 20px;
+    }
+    #pantalla h1 { font-size: 34px; margin: 0 0 10px; }
+    #pantalla p  { font-size: 18px; max-width: 480px; margin: 6px 0; }
+    #pantalla button { margin-top: 18px; padding: 14px 30px; font-size: 20px; border: none;
+      border-radius: 12px; background: #FFD700; color: #222; cursor: pointer; }
+    #pantalla.oculta { display: none; }
+  </style>
+</head>
+
+<body>
+  <video id="video" autoplay playsinline muted></video>
+  <div id="mira"></div>
+
+  <div id="panel">
+    <div>Nivel: <b id="nivel">1</b> / 3</div>
+    <div>Puntos: <b id="puntos">0</b></div>
+    <div>Meta: <b id="meta">0</b></div>
+    <div>Tiempo: <b id="tiempo">0</b> s</div>
+    <div>Récord: <b id="record">0</b></div>
+    <button class="btn" id="reiniciar">Reiniciar</button>
+    <button class="btn" id="recolocar">📍 Recolocar arena</button>
+    <button class="btn" id="modoCamara">🎯 Mover con cámara: SÍ</button>
+  </div>
+
+  <div id="dpad">
+    <button class="arriba" data-dir="arriba">▲</button>
+    <button class="izq" data-dir="izq">◀</button>
+    <button class="der" data-dir="der">▶</button>
+    <button class="abajo" data-dir="abajo">▼</button>
+  </div>
+
+  <div id="ayuda">Apunta con la mira al piso y el robot camina hacia ahí · Toca los enemigos rojos para destruirlos</div>
+
+  <div id="pantalla">
+    <h1 id="pTitulo">AR Quest</h1>
+    <p id="pTexto">Este juego es de realidad aumentada: necesita la cámara trasera para funcionar. Al activarla, la arena aparece frente a ti en tu cuarto. Mueve al robot con los botones para juntar monedas (+10) y cristales (+20), toca los enemigos rojos para destruirlos y evita que te toquen.</p>
+    <button id="pBoton">📷 Activar cámara y jugar</button>
+  </div>
+
+  <a-scene vr-mode-ui="enabled: false" renderer="alpha: true; antialias: true"
+           background="transparent: true" embedded
+           style="position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1;">
+
+    <a-entity light="type: ambient; intensity: 0.9"></a-entity>
+    <a-entity light="type: directional; intensity: 0.7" position="2 6 4"></a-entity>
+
+    <!-- Cámara virtual: gira igual que el celular (giroscopio) -->
+    <a-entity id="camara" camera="fov: 65; near: 0.05" position="0 0 0"></a-entity>
+
+    <!-- Toque en la pantalla para destruir enemigos -->
+    <a-entity cursor="rayOrigin: mouse; fuse: false" raycaster="objects: .tocable; far: 40"></a-entity>
+
+    <!-- La arena queda "anclada" en el espacio frente a ti -->
+    <a-entity id="mundo" position="0 -1.3 -3.2" scale="0.4 0.4 0.4">
+
+      <a-plane rotation="-90 0 0" width="6.4" height="6.4" color="#7BC8A4" opacity="0.5"></a-plane>
+      <a-plane rotation="-90 0 0" position="0 0.01 0" width="6.4" height="6.4"
+               material="color: #ffffff; wireframe: true; opacity: 0.6; transparent: true"
+               segments-width="8" segments-height="8"></a-plane>
+
+      <!-- Robot 3D descargado de un catálogo (three.js, RobotExpressive, CC0) -->
+      <a-entity id="robot" position="0 0 0">
+        <a-entity id="robotGLB" scale="0.3 0.3 0.3"
+                  gltf-model="url(https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/RobotExpressive/RobotExpressive.glb)"
+                  animation-mixer="clip: Idle"></a-entity>
+        <a-entity id="robotRespaldo" visible="false">
+          <a-box position="0 0.55" width="0.55" height="0.55" depth="0.35" color="#3b82f6"></a-box>
+          <a-box position="0 1.05" width="0.38" height="0.32" depth="0.32" color="#3b82f6"></a-box>
+          <a-sphere position="-0.08 1.08 0.17" radius="0.05" color="#fff"></a-sphere>
+          <a-sphere position="0.08 1.08 0.17" radius="0.05" color="#fff"></a-sphere>
+          <a-cylinder position="-0.15 0.14" radius="0.07" height="0.28" color="#444"></a-cylinder>
+          <a-cylinder position="0.15 0.14" radius="0.07" height="0.28" color="#444"></a-cylinder>
+        </a-entity>
+      </a-entity>
+
+      <!-- Anillo que marca el punto del piso al que apunta la cámara -->
+      <a-ring id="objetivo" rotation="-90 0 0" position="0 0.03 0" radius-inner="0.18" radius-outer="0.3"
+              color="#FFFFFF" material="opacity: 0.9; transparent: true" visible="false"></a-ring>
+
+      <a-entity id="zonaJuego"></a-entity>
+    </a-entity>
+  </a-scene>
+
+<script>
+  /* ============================================================
+     CONFIGURACIÓN
+     ============================================================ */
+  const NIVELES = [
+    { tiempo: 45, meta: 50,  monedas: 4, enemigos: 1, velEnemigo: 1.0 },
+    { tiempo: 35, meta: 80,  monedas: 5, enemigos: 2, velEnemigo: 1.4 },
+    { tiempo: 30, meta: 110, monedas: 6, enemigos: 3, velEnemigo: 1.8 }
+  ];
+  const PUNTOS_ENEMIGO = 15;   // se pierden si un enemigo toca al robot
+  const PUNTOS_DISPARO = 5;    // se ganan al tocar (destruir) un enemigo
+  const LIMITE = 2.8;
+  const VEL_ROBOT = 3.2;
+  const RADIO_CHOQUE = 0.65;
+  const DISTANCIA_ARENA = 3.2; // metros frente a ti
+  const ALTURA_PISO = -1.3;    // el piso queda 1.3 m debajo del celular
+
+  let nivel = 0, puntosNivel = 0, puntosTotal = 0, tiempo = 0;
+  let estado = "inicio";       // inicio | jugando | pausa | fin
+  let record = leerRecord();
+  let coleccionables = [], enemigos = [];
+  let invulnerableHasta = 0;
+  let camaraLista = false;
+  let controlCamara = true;    // el robot camina hacia donde apunta la cámara
+
+  const $ = id => document.getElementById(id);
+  const THREE = AFRAME.THREE;
+  const zona = $("zonaJuego");
+  const robot = $("robot");
+  const robotGLB = $("robotGLB");
+  const camara = $("camara");
+  const objetivoEl = $("objetivo");
+  const mundo = $("mundo");
+  const pos = { x: 0, z: 0 };
+
+  /* ============================================================
+     RÉCORD en el navegador
+     ============================================================ */
+  function leerRecord() {
+    try { return parseInt(localStorage.getItem("arquest_record")) || 0; } catch (e) { return 0; }
+  }
+  function guardarRecord() {
+    if (puntosTotal > record) {
+      record = puntosTotal;
+      try { localStorage.setItem("arquest_record", record); } catch (e) {}
+    }
+    $("record").textContent = record;
+  }
+
+  /* ============================================================
+     SONIDOS creados con código
+     ============================================================ */
+  let audio = null;
+  function tono(f, dur, tipo = "sine", retraso = 0) {
+    if (!audio) return;
+    const t0 = audio.currentTime + retraso;
+    const osc = audio.createOscillator(), vol = audio.createGain();
+    osc.type = tipo; osc.frequency.value = f;
+    vol.gain.setValueAtTime(0.2, t0);
+    vol.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    osc.connect(vol); vol.connect(audio.destination);
+    osc.start(t0); osc.stop(t0 + dur);
+  }
+  const sonidoMoneda  = () => { tono(880, 0.1, "square"); tono(1320, 0.15, "square", 0.08); };
+  const sonidoCristal = () => { tono(1000, 0.1); tono(1500, 0.1, "sine", 0.08); tono(2000, 0.2, "sine", 0.16); };
+  const sonidoEnemigo = () => { tono(160, 0.3, "sawtooth"); tono(110, 0.3, "sawtooth", 0.15); };
+  const sonidoDisparo = () => { tono(700, 0.08, "square"); tono(300, 0.15, "square", 0.06); };
+  const sonidoNivel   = () => [523, 659, 784, 1047].forEach((f, i) => tono(f, 0.2, "triangle", i * 0.12));
+  const sonidoDerrota = () => [400, 330, 260, 200].forEach((f, i) => tono(f, 0.25, "sawtooth", i * 0.15));
+  function activarAudio() {
+    if (!audio) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) audio = new AC(); }
+    if (audio && audio.state === "suspended") audio.resume();
+  }
+
+  /* ============================================================
+     ROBOT: animaciones del modelo
+     ============================================================ */
+  function animarRobot(clip, ms = 900) {
+    robotGLB.setAttribute("animation-mixer", "clip: " + clip);
+    clearTimeout(animarRobot.t);
+    animarRobot.t = setTimeout(() => {
+      if (estado !== "fin") robotGLB.setAttribute("animation-mixer", "clip: Idle");
+    }, ms);
+  }
+  robotGLB.addEventListener("model-error", () => {
+    robotGLB.setAttribute("visible", false);
+    $("robotRespaldo").setAttribute("visible", true);
+  });
+
+  /* ============================================================
+     CÁMARA TRASERA (obligatoria para jugar)
+     ============================================================ */
+  let flujo = null;
+  async function pedirCamara() {
+    if (camaraLista) return true;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      mostrarError("Este navegador no permite usar la cámara. Abre el juego con https en Chrome o Safari.");
+      return false;
+    }
+    try {
+      try {
+        flujo = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } }, audio: false });
+      } catch (e1) {
+        flujo = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+      const video = $("video");
+      video.srcObject = flujo;
+      video.style.display = "block";
+      await video.play();
+      camaraLista = true;
+      // Si la cámara se apaga en pleno juego, se pausa
+      flujo.getVideoTracks()[0].onended = () => {
+        camaraLista = false;
+        $("video").style.display = "none";
+        if (estado === "jugando") {
+          estado = "pausa";
+          mostrarPantalla("Cámara desactivada", "Activa de nuevo la cámara para seguir jugando.",
+            "📷 Activar cámara", () => { estado = "jugando"; $("pantalla").classList.add("oculta"); });
+        }
+      };
+      return true;
+    } catch (e) {
+      flujo = null;
+      mostrarError("No se pudo activar la cámara (" + e.name + "). Acepta el permiso de cámara del sitio y vuelve a intentarlo.");
+      return false;
+    }
+  }
+
+  function mostrarError(msg) {
+    $("pTitulo").textContent = "Se necesita la cámara";
+    $("pTexto").textContent = msg;
+    $("pBoton").textContent = "📷 Reintentar";
+    $("pantalla").classList.remove("oculta");
+  }
+
+  /* ============================================================
+     GIROSCOPIO: el mundo virtual se queda fijo mientras mueves el celular
+     ============================================================ */
+  const GRAD = Math.PI / 180;
+  const ori = { a: 0, b: 0, g: 0 };
+  let orientListo = false, alpha0 = null;
+  const _euler = new THREE.Euler(), _q0 = new THREE.Quaternion();
+  const _q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+  const _zee = new THREE.Vector3(0, 0, 1);
+
+  function onOrientacion(e) {
+    if (e.alpha == null) return;
+    orientListo = true;
+    if (alpha0 === null) alpha0 = e.alpha;
+    ori.a = e.alpha; ori.b = e.beta; ori.g = e.gamma;
+  }
+
+  async function activarGiroscopio() {
+    try {
+      if (typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function") {
+        const r = await DeviceOrientationEvent.requestPermission();   // iPhone
+        if (r !== "granted") return;
+      }
+    } catch (e) { return; }
+    window.addEventListener("deviceorientation", onOrientacion);
+  }
+
+  function aplicarOrientacion() {
+    if (!orientListo) return;
+    const pantalla = (screen.orientation ? screen.orientation.angle : (window.orientation || 0)) * GRAD;
+    const q = camara.object3D.quaternion;
+    _euler.set(ori.b * GRAD, (ori.a - alpha0) * GRAD, -ori.g * GRAD, "YXZ");
+    q.setFromEuler(_euler);
+    q.multiply(_q1);
+    q.multiply(_q0.setFromAxisAngle(_zee, -pantalla));
+  }
+
+  // Si no hay giroscopio (computadora), se mira arrastrando el mouse
+  function respaldoSinGiroscopio() {
+    setTimeout(() => {
+      if (!orientListo) {
+        camara.setAttribute("look-controls", "pointerLockEnabled: false; magicWindowTrackingEnabled: false");
+        $("ayuda").textContent = "Arrastra la pantalla para mirar alrededor · Toca los enemigos rojos";
+      }
+    }, 1500);
+  }
+
+  /* ============================================================
+     COLOCAR LA ARENA frente a donde estás mirando
+     ============================================================ */
+  function colocarArena() {
+    const f = new THREE.Vector3(0, 0, -1).applyQuaternion(camara.object3D.quaternion);
+    f.y = 0;
+    if (f.length() < 0.2) f.set(0, 0, -1);
+    f.normalize();
+    mundo.object3D.position.set(f.x * DISTANCIA_ARENA, ALTURA_PISO, f.z * DISTANCIA_ARENA);
+    mundo.object3D.rotation.y = Math.atan2(-f.x, -f.z);
+  }
+
+  /* ============================================================
+     APUNTAR CON LA CÁMARA: punto del piso al que mira el centro de la pantalla
+     ============================================================ */
+  const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3();
+  function objetivoDesdeCamara() {
+    _d.set(0, 0, -1).applyQuaternion(camara.object3D.quaternion);
+    if (_d.y > -0.05) return null;                       // mirando al horizonte o hacia arriba
+    _o.copy(camara.object3D.position);
+    const t = (mundo.object3D.position.y - _o.y) / _d.y;
+    if (t > 30) return null;
+    _p.copy(_d).multiplyScalar(t).add(_o);
+    mundo.object3D.updateMatrixWorld(true);
+    mundo.object3D.worldToLocal(_p);                     // a coordenadas de la arena
+    if (Math.abs(_p.x) > LIMITE + 1 || Math.abs(_p.z) > LIMITE + 1) return null;   // fuera de la arena
+    return { x: Math.max(-LIMITE, Math.min(LIMITE, _p.x)), z: Math.max(-LIMITE, Math.min(LIMITE, _p.z)) };
+  }
+
+  function actualizarMira() {
+    $("mira").style.display = (controlCamara && estado === "jugando") ? "block" : "none";
+    if (!controlCamara || estado !== "jugando") objetivoEl.object3D.visible = false;
+  }
+
+  /* ============================================================
+     CONTROLES: botones y teclado (mueven al robot en la arena)
+     ============================================================ */
+  const teclas = { arriba: false, abajo: false, izq: false, der: false };
+  const mapaTeclas = {
+    ArrowUp: "arriba", w: "arriba", W: "arriba", ArrowDown: "abajo", s: "abajo", S: "abajo",
+    ArrowLeft: "izq", a: "izq", A: "izq", ArrowRight: "der", d: "der", D: "der"
+  };
+  window.addEventListener("keydown", e => { const d = mapaTeclas[e.key]; if (d) { teclas[d] = true; e.preventDefault(); } });
+  window.addEventListener("keyup", e => { const d = mapaTeclas[e.key]; if (d) teclas[d] = false; });
+
+  document.querySelectorAll("#dpad button").forEach(b => {
+    const dir = b.dataset.dir;
+    const poner = v => e => { e.preventDefault(); teclas[dir] = v; b.classList.toggle("activo", v); };
+    b.addEventListener("pointerdown", poner(true));
+    b.addEventListener("pointerup", poner(false));
+    b.addEventListener("pointerleave", poner(false));
+    b.addEventListener("pointercancel", poner(false));
+    b.addEventListener("contextmenu", e => e.preventDefault());
+  });
+
+  /* ============================================================
+     OBJETOS DEL JUEGO
+     ============================================================ */
+  const aleatorio = (a, b) => a + Math.random() * (b - a);
+  function puntoLibre() {
+    let x, z;
+    do {
+      x = aleatorio(-LIMITE, LIMITE);
+      z = aleatorio(-LIMITE, LIMITE);
+    } while (Math.hypot(x - pos.x, z - pos.z) < 1.5);
+    return { x, z };
+  }
+
+  function crearMoneda() {
+    const cristal = Math.random() < 0.25;
+    const el = document.createElement(cristal ? "a-octahedron" : "a-cylinder");
+    const p = puntoLibre();
+    el.setAttribute("radius", 0.28);
+    if (cristal) {
+      el.setAttribute("color", "#00BFFF");
+      el.setAttribute("animation", "property: rotation; to: 360 360 0; loop: true; dur: 3000; easing: linear");
+    } else {
+      el.setAttribute("height", 0.1);
+      el.setAttribute("color", "#FFD700");
+      el.setAttribute("rotation", "90 0 0");
+      el.setAttribute("animation", "property: rotation; to: 90 360 0; loop: true; dur: 2500; easing: linear");
+    }
+    el.setAttribute("position", `${p.x} 0.7 ${p.z}`);
+    zona.appendChild(el);
+    coleccionables.push({ el, x: p.x, z: p.z, valor: cristal ? 20 : 10, cristal });
+  }
+
+  function crearEnemigo() {
+    const el = document.createElement("a-dodecahedron");
+    const p = puntoLibre();
+    el.setAttribute("radius", 0.34);
+    el.setAttribute("color", "#E53935");
+    el.setAttribute("animation", "property: rotation; to: 360 360 0; loop: true; dur: 1500; easing: linear");
+    el.setAttribute("position", `${p.x} 0.7 ${p.z}`);
+    // Zona de toque más grande e invisible, para que sea fácil tocarlo con el dedo
+    const zonaToque = document.createElement("a-sphere");
+    zonaToque.setAttribute("class", "tocable");
+    zonaToque.setAttribute("radius", 0.8);
+    zonaToque.setAttribute("material", "opacity: 0; transparent: true");
+    el.appendChild(zonaToque);
+    const enemigo = { el, x: p.x, z: p.z, objX: p.x, objZ: p.z };
+    el.addEventListener("click", () => destruirEnemigo(enemigo));
+    zona.appendChild(el);
+    enemigos.push(enemigo);
+  }
+
+  function limpiarZona() {
+    while (zona.firstChild) zona.removeChild(zona.firstChild);
+    coleccionables = []; enemigos = [];
+  }
+  function quitar(el) {
+    el.setAttribute("animation__salir", "property: scale; to: 0 0 0; dur: 200");
+    setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 220);
+  }
+
+  /* ============================================================
+     BUCLE DEL JUEGO
+     ============================================================ */
+  let anterior = performance.now();
+  function bucle(ahora) {
+    const dt = Math.min((ahora - anterior) / 1000, 0.05);
+    anterior = ahora;
+
+    aplicarOrientacion();
+
+    if (estado === "jugando" && camaraLista) {
+      let dx = (teclas.der ? 1 : 0) - (teclas.izq ? 1 : 0);
+      let dz = (teclas.abajo ? 1 : 0) - (teclas.arriba ? 1 : 0);
+      let vel2 = VEL_ROBOT;
+
+      // Sin botones presionados, el robot camina hacia el punto del piso que apunta la cámara
+      const obj = (!(dx || dz) && controlCamara) ? objetivoDesdeCamara() : null;
+      if (obj) {
+        const ox = obj.x - pos.x, oz = obj.z - pos.z;
+        const dist = Math.hypot(ox, oz);
+        objetivoEl.object3D.position.set(obj.x, 0.03, obj.z);
+        objetivoEl.object3D.visible = true;
+        if (dist > 0.2) { dx = ox / dist; dz = oz / dist; vel2 = VEL_ROBOT * Math.min(1, dist / 1.0); }
+      } else {
+        objetivoEl.object3D.visible = false;
+      }
+
+      if (dx || dz) {
+        const n = Math.hypot(dx, dz);
+        pos.x = Math.max(-LIMITE, Math.min(LIMITE, pos.x + (dx / n) * vel2 * dt));
+        pos.z = Math.max(-LIMITE, Math.min(LIMITE, pos.z + (dz / n) * vel2 * dt));
+        robot.object3D.rotation.y = Math.atan2(dx, dz);
+      }
+      robot.object3D.position.set(pos.x, 0, pos.z);
+
+      for (let i = coleccionables.length - 1; i >= 0; i--) {
+        const c = coleccionables[i];
+        if (Math.hypot(c.x - pos.x, c.z - pos.z) < RADIO_CHOQUE) {
+          coleccionables.splice(i, 1);
+          quitar(c.el);
+          recoger(c);
+          if (estado !== "jugando") break;
+        }
+      }
+
+      const vel = NIVELES[nivel].velEnemigo;
+      for (let i = enemigos.length - 1; i >= 0 && estado === "jugando"; i--) {
+        const e = enemigos[i];
+        const ex = e.objX - e.x, ez = e.objZ - e.z;
+        const d = Math.hypot(ex, ez);
+        if (d < 0.1) { e.objX = aleatorio(-LIMITE, LIMITE); e.objZ = aleatorio(-LIMITE, LIMITE); }
+        else { e.x += (ex / d) * vel * dt; e.z += (ez / d) * vel * dt; }
+        e.el.object3D.position.set(e.x, 0.7, e.z);
+
+        if (ahora > invulnerableHasta && Math.hypot(e.x - pos.x, e.z - pos.z) < RADIO_CHOQUE) {
+          invulnerableHasta = ahora + 1000;
+          enemigos.splice(i, 1);
+          quitar(e.el);
+          golpe();
+        }
+      }
+    }
+    requestAnimationFrame(bucle);
+  }
+
+  function recoger(c) {
+    puntosNivel += c.valor;
+    puntosTotal += c.valor;
+    c.cristal ? sonidoCristal() : sonidoMoneda();
+    animarRobot("Jump", 800);
+    actualizarPanel();
+    if (puntosNivel >= NIVELES[nivel].meta) return terminarNivel();
+    setTimeout(() => { if (estado === "jugando") crearMoneda(); }, 300);
+  }
+
+  function golpe() {
+    puntosTotal = Math.max(0, puntosTotal - PUNTOS_ENEMIGO);
+    puntosNivel = Math.max(0, puntosNivel - PUNTOS_ENEMIGO);
+    sonidoEnemigo();
+    animarRobot("No", 900);
+    actualizarPanel();
+    setTimeout(() => { if (estado === "jugando") crearEnemigo(); }, 1200);
+  }
+
+  // Interacción RA: tocar un enemigo en la pantalla lo destruye
+  function destruirEnemigo(e) {
+    if (estado !== "jugando") return;
+    const i = enemigos.indexOf(e);
+    if (i === -1) return;
+    enemigos.splice(i, 1);
+    quitar(e.el);
+    puntosNivel += PUNTOS_DISPARO;
+    puntosTotal += PUNTOS_DISPARO;
+    sonidoDisparo();
+    actualizarPanel();
+    if (puntosNivel >= NIVELES[nivel].meta) return terminarNivel();
+    setTimeout(() => { if (estado === "jugando") crearEnemigo(); }, 1500);
+  }
+
+  /* ============================================================
+     FLUJO: niveles, victoria y derrota
+     ============================================================ */
+  function iniciarNivel() {
+    const cfg = NIVELES[nivel];
+    puntosNivel = 0;
+    tiempo = cfg.tiempo;
+    pos.x = 0; pos.z = 0;
+    limpiarZona();
+    estado = "jugando";
+    for (let i = 0; i < cfg.monedas; i++) crearMoneda();
+    for (let i = 0; i < cfg.enemigos; i++) crearEnemigo();
+    actualizarPanel();
+    $("pantalla").classList.add("oculta");
+    actualizarMira();
+  }
+
+  function terminarNivel() {
+    limpiarZona();
+    guardarRecord();
+    if (nivel === NIVELES.length - 1) return victoria();
+    sonidoNivel();
+    estado = "pausa";
+    mostrarPantalla(`¡Nivel ${nivel + 1} completado!`,
+      `Llevas ${puntosTotal} puntos. El siguiente nivel tiene ${NIVELES[nivel + 1].tiempo} segundos y más enemigos.`,
+      "Siguiente nivel", () => { nivel++; iniciarNivel(); });
+  }
+
+  function victoria() {
+    estado = "fin";
+    sonidoNivel(); setTimeout(sonidoNivel, 600);
+    animarRobot("Dance", 60000);
+    const nuevo = puntosTotal >= record && puntosTotal > 0;
+    mostrarPantalla("🏆 ¡VICTORIA!",
+      `Completaste los 3 niveles con ${puntosTotal} puntos.` + (nuevo ? " ¡Nuevo récord!" : ` Tu récord es ${record}.`),
+      "Jugar de nuevo", nuevaPartida);
+  }
+
+  function derrota() {
+    estado = "fin";
+    limpiarZona();
+    guardarRecord();
+    sonidoDerrota();
+    animarRobot("Death", 60000);
+    mostrarPantalla("Se acabó el tiempo",
+      `No llegaste a la meta del nivel ${nivel + 1}. Puntos: ${puntosTotal} · Récord: ${record}`,
+      "Intentar de nuevo", nuevaPartida);
+  }
+
+  function nuevaPartida() {
+    nivel = 0; puntosTotal = 0;
+    robotGLB.setAttribute("animation-mixer", "clip: Idle");
+    colocarArena();
+    iniciarNivel();
+  }
+
+  // Todo botón de la pantalla exige tener la cámara activa antes de continuar
+  async function conCamara(accion) {
+    activarAudio();
+    const giro = activarGiroscopio();      // se pide dentro del toque (necesario en iPhone)
+    const ok = await pedirCamara();
+    await giro;
+    if (!ok) return;
+    respaldoSinGiroscopio();
+    accion();
+  }
+
+  function mostrarPantalla(titulo, texto, boton, accion) {
+    $("pTitulo").textContent = titulo;
+    $("pTexto").textContent = texto;
+    $("pBoton").textContent = boton;
+    $("pBoton").onclick = () => conCamara(accion);
+    $("pantalla").classList.remove("oculta");
+    setTimeout(actualizarMira, 0);
+  }
+
+  /* ============================================================
+     PANEL Y TEMPORIZADOR
+     ============================================================ */
+  function actualizarPanel() {
+    $("nivel").textContent = nivel + 1;
+    $("puntos").textContent = puntosTotal;
+    $("meta").textContent = `${puntosNivel} / ${NIVELES[nivel].meta}`;
+    $("tiempo").textContent = tiempo;
+    $("record").textContent = record;
+  }
+
+  setInterval(() => {
+    if (estado !== "jugando" || !camaraLista) return;
+    tiempo--;
+    $("tiempo").textContent = tiempo;
+    if (tiempo <= 0) derrota();
+  }, 1000);
+
+  $("reiniciar").addEventListener("click", () => conCamara(nuevaPartida));
+  $("recolocar").addEventListener("click", colocarArena);
+  $("modoCamara").addEventListener("click", () => {
+    controlCamara = !controlCamara;
+    $("modoCamara").textContent = "🎯 Mover con cámara: " + (controlCamara ? "SÍ" : "NO");
+    actualizarMira();
+  });
+  $("pBoton").onclick = () => conCamara(nuevaPartida);
+
+  actualizarPanel();
+  requestAnimationFrame(bucle);
+</script>
+
+</body>
+</html>
